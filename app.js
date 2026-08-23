@@ -160,29 +160,77 @@
       body.innerHTML=`<div class="error-box">${esc(projectCreateMessage(e.message))}</div><div class="login-note"><i class="bi bi-shield-lock"></i><span>HUB_TOKEN은 AuthHub 백엔드에서만 MONITOR에 전달됩니다.</span></div>`;
       return;
     }
-    const selectable=items.filter(x=>x.enabled&&!x.linked);
-    body.innerHTML=`<label class="field"><span>프로젝트 검색</span><input class="input" id="m-monitor-search" placeholder="이름, pNN, URL 검색" autocomplete="off"></label><label class="field"><span>MONITOR 프로젝트</span><select class="select" id="m-monitor-project"></select><small>프로젝트 ID는 MONITOR가 발급한 pNN을 그대로 사용하며 AuthHub에서 변경하지 않습니다.</small></label><div id="m-monitor-meta" class="monitor-project-meta"></div><label class="field"><span>AuthHub 메모</span><textarea class="textarea" id="m-desc" placeholder="선택 사항"></textarea></label>`;
-    const search=body.querySelector('#m-monitor-search'), select=body.querySelector('#m-monitor-project'), meta=body.querySelector('#m-monitor-meta');
-    const renderOptions=()=>{
-      const q=search.value.trim().toLowerCase();
-      const filtered=items.filter(x=>!q||[x.name,x.project_id,x.label,x.public_url,x.category].filter(Boolean).join(' ').toLowerCase().includes(q));
-      select.innerHTML=`<option value="">프로젝트를 선택하세요</option>`+filtered.map(x=>`<option value="${esc(x.project_id)}" ${(!x.enabled||x.linked)?'disabled':''}>${esc(x.label||`${x.name} (${x.project_id})`)}${x.linked?' · 연결됨':!x.enabled?' · 비활성':''}</option>`).join('');
-      if(!filtered.length) select.innerHTML='<option value="">검색 결과가 없습니다</option>';
-      select.value=''; meta.innerHTML=''; save.disabled=true;
+    const normalize=v=>String(v||'').normalize('NFKC').toLocaleLowerCase();
+    const searchText=x=>[x.name,x.project_id,x.label,x.public_url,x.category].filter(Boolean).map(normalize).join(' ');
+    let selected=null;
+    let filtered=[];
+    let activeIndex=-1;
+    body.innerHTML=`<label class="field"><span>MONITOR 프로젝트</span><div class="monitor-combobox" id="m-monitor-combobox"><div class="monitor-combobox-input"><input class="input" id="m-monitor-project" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="m-monitor-options" placeholder="프로젝트명, pNN, URL 검색" autocomplete="off"><button type="button" class="monitor-combobox-toggle" tabindex="-1" aria-label="프로젝트 목록 열기"><i class="bi bi-chevron-down"></i></button></div><div class="monitor-combobox-menu" id="m-monitor-options" role="listbox"></div></div><small>이름·pNN·URL을 입력하면 같은 목록에서 바로 필터링됩니다. pNN은 MONITOR가 발급한 값을 그대로 사용합니다.</small></label><div id="m-monitor-selection" class="monitor-selection-line"></div><label class="field"><span>AuthHub 메모</span><textarea class="textarea" id="m-desc" placeholder="선택 사항"></textarea></label>`;
+    const combo=body.querySelector('#m-monitor-combobox');
+    const input=body.querySelector('#m-monitor-project');
+    const menu=body.querySelector('#m-monitor-options');
+    const toggle=body.querySelector('.monitor-combobox-toggle');
+    const selection=body.querySelector('#m-monitor-selection');
+    const openMenu=()=>{combo.classList.add('open');input.setAttribute('aria-expanded','true')};
+    const closeMenu=()=>{combo.classList.remove('open');input.setAttribute('aria-expanded','false');activeIndex=-1};
+    const selectable=x=>!!x.enabled&&!x.linked;
+    const setSelection=item=>{
+      selected=item;
+      input.value=item.label||`${item.name} (${item.project_id})`;
+      selection.innerHTML=`<strong>${esc(item.label||`${item.name} (${item.project_id})`)}</strong><span>${esc(item.public_url||'공개 URL 없음')}${item.category?` · ${esc(item.category)}`:''}</span>`;
+      save.disabled=!selectable(item);
+      closeMenu();
     };
-    const renderMeta=()=>{
-      const item=items.find(x=>x.project_id===select.value);
-      if(!item){meta.innerHTML='';save.disabled=true;return;}
-      meta.innerHTML=`<div><strong>${esc(item.label||projectDisplay(item))}</strong><small>${esc(item.public_url||'공개 URL 없음')}${item.category?` · ${esc(item.category)}`:''}</small></div><span class="badge ${item.enabled?'green':'gray'}">${item.enabled?'enabled':'disabled'}</span>`;
-      save.disabled=!item.enabled||item.linked;
+    const clearSelection=()=>{selected=null;selection.innerHTML='';save.disabled=true};
+    const renderResults=()=>{
+      const tokens=normalize(input.value).trim().split(/\s+/).filter(Boolean);
+      filtered=items.filter(x=>tokens.every(token=>searchText(x).includes(token)));
+      if(!filtered.length){
+        menu.innerHTML='<div class="monitor-combobox-empty">검색 결과가 없습니다.</div>';
+        activeIndex=-1;
+        return;
+      }
+      menu.innerHTML=filtered.map((x,i)=>{
+        const disabled=!selectable(x);
+        const status=x.linked?'연결됨':!x.enabled?'비활성':'';
+        return `<button type="button" class="monitor-combobox-option${disabled?' disabled':''}" role="option" data-index="${i}" aria-disabled="${disabled?'true':'false'}"><span><strong>${esc(x.label||`${x.name} (${x.project_id})`)}</strong><small>${esc(x.public_url||'공개 URL 없음')}${x.category?` · ${esc(x.category)}`:''}</small></span>${status?`<em>${esc(status)}</em>`:''}</button>`;
+      }).join('');
+      menu.querySelectorAll('.monitor-combobox-option').forEach(btn=>btn.onclick=()=>{
+        const item=filtered[Number(btn.dataset.index)];
+        if(item&&selectable(item))setSelection(item);
+      });
+      if(activeIndex>=filtered.length)activeIndex=-1;
     };
-    search.oninput=renderOptions; select.onchange=renderMeta; renderOptions();
-    if(!selectable.length) save.disabled=true;
+    const moveActive=direction=>{
+      if(!filtered.length)return;
+      let i=activeIndex;
+      for(let count=0;count<filtered.length;count++){
+        i=(i+direction+filtered.length)%filtered.length;
+        if(selectable(filtered[i])){activeIndex=i;break;}
+      }
+      menu.querySelectorAll('.monitor-combobox-option').forEach((el,idx)=>el.classList.toggle('active',idx===activeIndex));
+      menu.querySelector(`[data-index="${activeIndex}"]`)?.scrollIntoView({block:'nearest'});
+    };
+    input.onfocus=()=>{renderResults();openMenu()};
+    input.onclick=()=>{renderResults();openMenu()};
+    input.oninput=()=>{clearSelection();activeIndex=-1;renderResults();openMenu()};
+    input.onkeydown=e=>{
+      if(e.key==='ArrowDown'){e.preventDefault();if(!combo.classList.contains('open')){renderResults();openMenu()}moveActive(1);return;}
+      if(e.key==='ArrowUp'){e.preventDefault();if(!combo.classList.contains('open')){renderResults();openMenu()}moveActive(-1);return;}
+      if(e.key==='Enter'&&combo.classList.contains('open')){e.preventDefault();if(activeIndex>=0&&selectable(filtered[activeIndex]))setSelection(filtered[activeIndex]);return;}
+      if(e.key==='Escape'){e.preventDefault();closeMenu();}
+    };
+    toggle.onclick=()=>{
+      if(combo.classList.contains('open'))closeMenu();
+      else {input.focus();renderResults();openMenu();}
+    };
+    m.addEventListener('click',e=>{if(!combo.contains(e.target))closeMenu()});
+    renderResults();
     save.onclick=async()=>{
-      if(save.disabled||!select.value)return;
+      if(save.disabled||!selected)return;
       save.disabled=true;loading(true);
       try{
-        const r=await request('/admin/projects',{method:'POST',body:JSON.stringify({monitorProjectId:select.value,description:body.querySelector('#m-desc').value})});
+        const r=await request('/admin/projects',{method:'POST',body:JSON.stringify({monitorProjectId:selected.project_id,description:body.querySelector('#m-desc').value})});
         m.remove();toast(r.existing?'이미 연결된 프로젝트를 열었습니다.':'MONITOR 프로젝트를 AuthHub에 연결했습니다.');await bootstrap();navigate(`/project/${r.id}`)
       }catch(e){toast(projectCreateMessage(e.message),'error');save.disabled=false}finally{loading(false)}
     };
