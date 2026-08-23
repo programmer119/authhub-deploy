@@ -3,7 +3,6 @@
   const cfg = window.AUTHHUB_CONFIG || {};
   const apiBase = String(cfg.apiBase || '').replace(/\/$/, '');
   const state = {
-    token: sessionStorage.getItem('authhub_admin_token') || '',
     route: location.hash.slice(1) || '/overview',
     loading: false,
     projects: [],
@@ -45,15 +44,17 @@
   async function request(path, options={}) {
     if (!apiBase || apiBase.includes('__AUTHHUB')) throw new Error('API 주소가 아직 설정되지 않았습니다.');
     const headers = { 'content-type':'application/json', ...(options.headers||{}) };
-    if (state.token) headers.authorization = `Bearer ${state.token}`;
-    const res = await fetch(`${apiBase}${path}`, { ...options, headers });
+    const res = await fetch(`${apiBase}${path}`, { credentials:'include', ...options, headers });
     const text = await res.text(); let data={}; try{data=text?JSON.parse(text):{}}catch{data={error:text||'request_failed'}}
-    if(res.status===401 && !['/admin/login','/admin/setup','/admin/status'].includes(path)){ logout(false); throw new Error('관리자 세션이 만료되었습니다.'); }
+    if(res.status===401 && !['/admin/login','/admin/setup','/admin/status','/admin/logout'].includes(path)){ state.adminStatus={...(state.adminStatus||{}),authenticated:false}; throw new Error('관리자 세션이 만료되었습니다.'); }
     if(!res.ok) throw new Error(data.error || `요청 실패 (${res.status})`);
     return data;
   }
   function navigate(path) { location.hash = path; }
-  function logout(show=true){sessionStorage.removeItem('authhub_admin_token');state.token='';state.project=null;if(show)toast('로그아웃했습니다.');render();}
+  async function logout(show=true){
+    try{await request('/admin/logout',{method:'POST',body:'{}'});}catch(_){}
+    state.project=null; state.adminStatus={...(state.adminStatus||{}),authenticated:false}; if(show)toast('로그아웃했습니다.'); await render();
+  }
 
   function sidebar(active) {
     const nav=(key,label,icon,path,count='')=>`<button class="nav-item ${active===key?'active':''}" data-nav="${path}"><i class="bi ${icon}"></i><span>${label}</span>${count!==''?`<b class="nav-count">${count}</b>`:''}</button>`;
@@ -79,27 +80,27 @@
   function empty(icon,title,desc,button=''){return `<div class="empty"><i class="bi ${icon}"></i><strong>${esc(title)}</strong><p>${esc(desc)}</p>${button}</div>`}
 
   function setupView(status={}) {
-    app.innerHTML = `<div class="login-page"><section class="login-brand-panel"><div class="login-brand"><div class="brand-mark">A</div><strong>AuthHub</strong></div><div class="login-hero"><div class="kicker">FIRST ADMIN SETUP</div><h1>처음 한 번만,<br><em>관리자 계정을 설정합니다.</em></h1><p>배포 파일에 관리자 비밀번호를 고정하지 않고 첫 접속에서 직접 관리자 계정을 생성합니다.</p></div><div class="login-points"><span><i class="bi bi-shield-check"></i>PayHub-style first setup</span><span><i class="bi bi-database-lock"></i>DB stored credentials</span><span><i class="bi bi-key"></i>One-time setup</span></div></section><section class="login-form-panel"><form class="login-box" id="setup-form"><div class="eyebrow">SUAVEFORGE · AUTH OPERATIONS</div><h2>최초 관리자 설정</h2><p>이 설정은 관리자 계정이 없는 경우에만 한 번 허용됩니다.</p><div id="login-error"></div><label class="field"><span>관리자 이메일</span><input class="input" name="email" type="email" autocomplete="username" required placeholder="admin@example.com"></label><label class="field"><span>비밀번호</span><input class="input" name="password" type="password" autocomplete="new-password" minlength="10" required placeholder="10자 이상"></label><label class="field"><span>비밀번호 확인</span><input class="input" name="confirm" type="password" autocomplete="new-password" minlength="10" required placeholder="비밀번호 다시 입력"></label>${status.setup_token_required?`<label class="field"><span>Setup Token</span><input class="input" name="setupToken" type="password" autocomplete="off" required placeholder="AUTHHUB-ADMIN-ACCESS.txt 확인"></label>`:''}<button class="btn primary login-submit" type="submit"><i class="bi bi-check2-circle"></i>관리자 계정 생성</button><div class="login-note"><i class="bi bi-shield-lock"></i><span>설정 완료 후 같은 화면은 다시 열리지 않습니다.</span></div></form></section></div>`;
+    app.innerHTML = `<div class="login-page"><section class="login-brand-panel"><div class="login-brand"><div class="brand-mark">A</div><strong>AuthHub</strong></div><div class="login-hero"><div class="kicker">FIRST ADMIN SETUP</div><h1>처음 한 번만,<br><em>관리자 계정을 설정합니다.</em></h1><p>배포 파일에 관리자 비밀번호를 고정하지 않고 첫 접속에서 직접 관리자 계정을 생성합니다.</p></div><div class="login-points"><span><i class="bi bi-shield-check"></i>PayHub-style first setup</span><span><i class="bi bi-database-lock"></i>DB stored credentials</span><span><i class="bi bi-key"></i>One-time setup</span></div></section><section class="login-form-panel"><form class="login-box" id="setup-form"><div class="eyebrow">SUAVEFORGE · AUTH OPERATIONS</div><h2>최초 관리자 설정</h2><p>이 설정은 관리자 계정이 없는 경우에만 한 번 허용됩니다.</p><div id="login-error"></div><label class="field"><span>관리자 아이디</span><input class="input" name="username" type="text" autocomplete="username" minlength="3" required placeholder="admin"></label><label class="field"><span>비밀번호</span><input class="input" name="password" type="password" autocomplete="new-password" minlength="10" required placeholder="10자 이상"></label><label class="field"><span>비밀번호 확인</span><input class="input" name="confirm" type="password" autocomplete="new-password" minlength="10" required placeholder="비밀번호 다시 입력"></label>${status.setup_token_required?`<label class="field"><span>Setup Token</span><input class="input" name="setupToken" type="password" autocomplete="off" required placeholder="AUTHHUB-ADMIN-ACCESS.txt 확인"></label>`:''}<button class="btn primary login-submit" type="submit"><i class="bi bi-check2-circle"></i>관리자 계정 생성</button><div class="login-note"><i class="bi bi-shield-lock"></i><span>설정 완료 후 같은 화면은 다시 열리지 않습니다.</span></div></form></section></div>`;
     document.getElementById('setup-form').addEventListener('submit', async e => {
       e.preventDefault(); const fd=new FormData(e.currentTarget); const error=document.getElementById('login-error'); error.innerHTML='';
       if(String(fd.get('password'))!==String(fd.get('confirm'))){error.innerHTML='<div class="error-box">비밀번호 확인이 일치하지 않습니다.</div>';return;}
       loading(true);
-      try{const data=await request('/admin/setup',{method:'POST',body:JSON.stringify({email:fd.get('email'),password:fd.get('password'),setupToken:fd.get('setupToken')||''})});state.token=data.token;sessionStorage.setItem('authhub_admin_token',data.token);state.adminStatus={setup_required:false,authenticated:true};await bootstrap();navigate('/overview');await render();}
-      catch(err){const msg=({invalid_admin_setup_token:'Setup Token이 올바르지 않습니다.',admin_already_configured:'이미 관리자 계정이 설정되어 있습니다.',invalid_admin_email:'관리자 이메일을 확인하세요.',admin_password_too_short:'비밀번호는 10자 이상이어야 합니다.'})[err.message]||err.message;error.innerHTML=`<div class="error-box">${esc(msg)}</div>`}finally{loading(false)}
+      try{await request('/admin/setup',{method:'POST',body:JSON.stringify({username:fd.get('username'),password:fd.get('password'),setupToken:fd.get('setupToken')||''})});state.adminStatus={setup_required:false,authenticated:true};await bootstrap();navigate('/overview');await render();}
+      catch(err){const msg=({invalid_admin_setup_token:'Setup Token이 올바르지 않습니다.',admin_already_configured:'이미 관리자 계정이 설정되어 있습니다.',invalid_admin_username:'관리자 아이디는 3자 이상이어야 합니다.',admin_password_too_short:'비밀번호는 10자 이상이어야 합니다.'})[err.message]||err.message;error.innerHTML=`<div class="error-box">${esc(msg)}</div>`}finally{loading(false)}
     });
   }
 
   function loginView() {
-    app.innerHTML = `<div class="login-page"><section class="login-brand-panel"><div class="login-brand"><div class="brand-mark">A</div><strong>AuthHub</strong></div><div class="login-hero"><div class="kicker">CENTRAL IDENTITY LAYER</div><h1>인증은 하나로,<br><em>브랜드 경험은 그대로.</em></h1><p>프로젝트마다 로그인 화면과 제공 수단은 다르게 유지하면서 회원·세션·권한·OAuth 운영은 한 곳에서 관리합니다.</p></div><div class="login-points"><span><i class="bi bi-shield-check"></i>Encrypted secrets</span><span><i class="bi bi-diagram-3"></i>Multi-project</span><span><i class="bi bi-key"></i>OAuth & SSO</span></div></section><section class="login-form-panel"><form class="login-box" id="login-form"><div class="eyebrow">SUAVEFORGE · AUTH OPERATIONS</div><h2>관리자 로그인</h2><p>프로젝트별 인증 정책과 외부 로그인 연결을 관리합니다.</p><div id="login-error"></div><label class="field"><span>이메일</span><input class="input" name="email" type="email" autocomplete="username" required placeholder="admin@example.com"></label><label class="field"><span>비밀번호</span><input class="input" name="password" type="password" autocomplete="current-password" required placeholder="••••••••••••"></label><button class="btn primary login-submit" type="submit"><i class="bi bi-arrow-right"></i>로그인</button><div class="login-note"><i class="bi bi-shield-lock"></i><span>관리자 인증 정보와 프로젝트 Secret은 공개 배포 저장소에 저장하지 않습니다.</span></div></form></section></div>`;
+    app.innerHTML = `<div class="login-page"><section class="login-brand-panel"><div class="login-brand"><div class="brand-mark">A</div><strong>AuthHub</strong></div><div class="login-hero"><div class="kicker">CENTRAL IDENTITY LAYER</div><h1>인증은 하나로,<br><em>브랜드 경험은 그대로.</em></h1><p>프로젝트마다 로그인 화면과 제공 수단은 다르게 유지하면서 회원·세션·권한·OAuth 운영은 한 곳에서 관리합니다.</p></div><div class="login-points"><span><i class="bi bi-shield-check"></i>Encrypted secrets</span><span><i class="bi bi-diagram-3"></i>Multi-project</span><span><i class="bi bi-key"></i>OAuth & SSO</span></div></section><section class="login-form-panel"><form class="login-box" id="login-form"><div class="eyebrow">SUAVEFORGE · AUTH OPERATIONS</div><h2>관리자 로그인</h2><p>프로젝트별 인증 정책과 외부 로그인 연결을 관리합니다.</p><div id="login-error"></div><label class="field"><span>아이디</span><input class="input" name="username" type="text" autocomplete="username" required placeholder="admin"></label><label class="field"><span>비밀번호</span><input class="input" name="password" type="password" autocomplete="current-password" required placeholder="••••••••••••"></label><button class="btn primary login-submit" type="submit"><i class="bi bi-arrow-right"></i>로그인</button><div class="login-note"><i class="bi bi-shield-lock"></i><span>관리자 인증 정보와 프로젝트 Secret은 공개 배포 저장소에 저장하지 않습니다.</span></div></form></section></div>`;
     document.getElementById('login-form').addEventListener('submit', async e => {
       e.preventDefault(); const fd=new FormData(e.currentTarget); const error=document.getElementById('login-error'); error.innerHTML=''; loading(true);
-      try{const data=await request('/admin/login',{method:'POST',body:JSON.stringify({email:fd.get('email'),password:fd.get('password')})});state.token=data.token;sessionStorage.setItem('authhub_admin_token',data.token);await bootstrap();navigate('/overview');}
+      try{await request('/admin/login',{method:'POST',body:JSON.stringify({username:fd.get('username'),password:fd.get('password')})});state.adminStatus={setup_required:false,authenticated:true};await bootstrap();navigate('/overview');await render();}
       catch(err){const msg=err.message==='admin_setup_required'?'최초 관리자 설정이 필요합니다. 새로고침 후 계정을 설정하세요.':err.message;error.innerHTML=`<div class="error-box">${esc(msg)}</div>`}finally{loading(false)}
     });
   }
 
   async function bootstrap() {
-    if(!state.token)return;
+    if(!state.adminStatus?.authenticated)return;
     try{const data=await request('/admin/projects');state.projects=data.items||[];}catch(err){console.warn(err)}
   }
 
@@ -283,8 +284,8 @@
   function bindCommon(){app.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>navigate(b.dataset.nav));app.querySelectorAll('[data-project]').forEach(r=>r.onclick=()=>navigate(`/project/${r.dataset.project}`));app.querySelectorAll('[data-create-project]').forEach(b=>b.onclick=openCreateProject);app.querySelectorAll('[data-logout]').forEach(b=>b.onclick=()=>logout());app.querySelectorAll('[data-copy]').forEach(b=>b.onclick=async()=>{try{await navigator.clipboard.writeText(b.dataset.copy);toast('복사했습니다.')}catch{toast('복사하지 못했습니다.','error')}})}
   async function render(){
     try{state.adminStatus=await request('/admin/status')}catch(e){app.innerHTML=`<div class="error-box" style="margin:40px">${esc(e.message)}</div>`;return}
-    if(state.adminStatus.setup_required){if(state.token){sessionStorage.removeItem('authhub_admin_token');state.token=''}return setupView(state.adminStatus)}
-    if(!state.token)return loginView();
+    if(state.adminStatus.setup_required)return setupView(state.adminStatus);
+    if(!state.adminStatus.authenticated)return loginView();
     await bootstrap();const route=location.hash.slice(1)||'/overview';state.route=route;if(route==='/overview')return overviewView();if(route==='/projects')return projectsView();if(route.startsWith('/project/'))return projectView(route.split('/')[2]);if(route==='/users')return usersView();if(route==='/audit')return auditView();if(route==='/integration')return integrationView();navigate('/overview')}
   addEventListener('hashchange',()=>{render()});render();
 })();
